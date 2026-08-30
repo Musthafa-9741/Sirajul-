@@ -1,0 +1,399 @@
+import React, { useState, useEffect, useRef } from "react";
+
+// ---------------------------------------------------------------------------
+// PREVIEW ONLY — uses in-memory mock data instead of Supabase, so results
+// "publish" instantly here too, simulating what real-time updates look like.
+// The actual project (in the zip) is wired to a real Postgres database and
+// Supabase Realtime instead of this local state.
+// ---------------------------------------------------------------------------
+
+const FONT_LINK = "https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@400..700&family=Work+Sans:wght@400;500;600;700;800&display=swap";
+
+const CATEGORY_ICON = {
+  Speaking: "🎤", Recitation: "📖", Vocal: "🎶", Knowledge: "🧠", Writing: "✍️", Percussion: "🥁", Art: "🎨", General: "🏅",
+};
+
+const CATEGORIES = ["Speaking", "Recitation", "Vocal", "Knowledge", "Writing", "Percussion", "Art", "General"];
+
+const EMPTY_COMPETITION_FORM = { name: "", category: CATEGORIES[0] };
+
+function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+// Admin credentials for this preview's sign-in check
+const ADMIN_EMAIL = "ymusthafa313@gmail.com";
+const ADMIN_PASSWORD = "Must#9741";
+
+// Event date: September 5, 2026
+const EVENT_DATE = new Date(2026, 8, 5).getTime();
+
+// Group points for 1st / 2nd / 3rd place
+const PLACE_POINTS = { first: 10, second: 5, third: 3 };
+
+const INITIAL_GROUPS = [
+  { id: "g1", name: "Kanz" },
+  { id: "g2", name: "Jawhar" },
+];
+
+function groupName(groups, groupId) {
+  return groups.find((g) => g.id === groupId)?.name || "—";
+}
+
+// Sums each group's points across every published competition result
+function computeGroupTotals(groups, results) {
+  const totals = groups.map((g) => ({ ...g, total: 0 }));
+  const byId = Object.fromEntries(totals.map((t) => [t.id, t]));
+  Object.values(results).forEach((r) => {
+    if (!r.published) return;
+    ["first", "second", "third"].forEach((place) => {
+      const entry = r[place];
+      if (entry?.groupId && byId[entry.groupId]) {
+        byId[entry.groupId].total += PLACE_POINTS[place];
+      }
+    });
+  });
+  return totals;
+}
+
+function topThreeGroups(totals) {
+  return [...totals].sort((a, b) => b.total - a.total).slice(0, 3);
+}
+
+// Each student belongs to a fixed group and has a unique student ID
+const INITIAL_STUDENTS = [
+  { id: "s1", groupId: "g1", studentId: "K01", name: "Mohammed A" },
+  { id: "s2", groupId: "g1", studentId: "K02", name: "Shafi" },
+  { id: "s3", groupId: "g1", studentId: "K03", name: "Fathima S" },
+  { id: "s4", groupId: "g2", studentId: "J01", name: "Afsal K" },
+  { id: "s5", groupId: "g2", studentId: "J02", name: "Ayesha R" },
+  { id: "s6", groupId: "g2", studentId: "J03", name: "Zainab M" },
+];
+
+function findStudentById(students, studentId) {
+  return students.find((s) => s.studentId === studentId);
+}
+
+// Finds every published competition a given student ID placed in
+function findStudentResultsById(studentId, competitions, results) {
+  if (!studentId) return [];
+  const rows = [];
+  Object.entries(results).forEach(([compId, r]) => {
+    if (!r.published) return;
+    ["first", "second", "third"].forEach((place) => {
+      if (r[place]?.studentId?.toLowerCase() === studentId.toLowerCase()) {
+        const comp = competitions.find((c) => c.id === compId);
+        if (comp) {
+          rows.push({
+            competitionName: comp.name,
+            place,
+            medal: place === "first" ? "🥇" : place === "second" ? "🥈" : "🥉",
+          });
+        }
+      }
+    });
+  });
+  return rows;
+}
+
+const INITIAL_COMPETITIONS = [
+  { id: "1", name: "Speech Competition", category: "Speaking" },
+  { id: "2", name: "Quran Recitation", category: "Recitation" },
+  { id: "3", name: "Nasheed", category: "Vocal" },
+  { id: "4", name: "Islamic Quiz", category: "Knowledge" },
+  { id: "5", name: "Essay Writing", category: "Writing" },
+  { id: "6", name: "Duff Competition", category: "Percussion" },
+];
+
+const INITIAL_RESULTS = {
+  "1": {
+    first: { groupId: "g1", studentId: "K01" },
+    second: { groupId: "g2", studentId: "J01" },
+    third: { groupId: "g1", studentId: "K02" },
+    published: true,
+  },
+  "2": {
+    first: { groupId: "g2", studentId: "J02" },
+    second: { groupId: "g1", studentId: "K03" },
+    third: { groupId: "g2", studentId: "J03" },
+    published: true,
+  },
+};
+
+function useCountdown(target) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const diff = Math.max(0, target - now);
+  return {
+    days: Math.floor(diff / 86400000),
+    hours: Math.floor((diff / 3600000) % 24),
+    minutes: Math.floor((diff / 60000) % 60),
+    seconds: Math.floor((diff / 1000) % 60),
+  };
+}
+
+function LiveIndicator({ label = "Live", dark }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${dark ? "border-white/10 bg-white/10 text-white" : "border-black/5 bg-white/70 text-emerald-700"}`}>
+      <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+      {label}
+    </span>
+  );
+}
+
+function Confetti() {
+  const colors = ["#D4AF37", "#146356", "#EAD9A0", "#1E7D5E"];
+  return (
+    <div className="pointer-events-none absolute inset-x-0 -top-2 flex justify-center overflow-hidden">
+      {Array.from({ length: 16 }).map((_, i) => (
+        <span key={i} className="absolute top-0 h-2 w-1 rounded-sm animate-bounce"
+          style={{ left: `${(i / 16) * 100}%`, backgroundColor: colors[i % colors.length], animationDelay: `${(i % 6) * 90}ms`, animationDuration: "1.2s" }} />
+      ))}
+    </div>
+  );
+}
+
+function KhatamPattern({ opacity = 0.12, className = "" }) {
+  return (
+    <svg className={className} style={{ opacity }} width="100%" height="100%">
+      <defs>
+        <pattern id="khatam" width="64" height="64" patternUnits="userSpaceOnUse">
+          <path d="M32 2 L44 20 L62 20 L50 32 L62 44 L44 44 L32 62 L20 44 L2 44 L14 32 L2 20 L20 20 Z" fill="none" stroke="#C9A227" strokeWidth="1" />
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#khatam)" />
+    </svg>
+  );
+}
+
+const NAV = [
+  { key: "home", label: "Home", icon: "🏠" },
+  { key: "competitions", label: "Competitions", icon: "🏆" },
+  { key: "results", label: "Results", icon: "🥇" },
+  { key: "totalresult", label: "Total Result", icon: "🏅" },
+  { key: "gallery", label: "Gallery", icon: "🖼️" },
+  { key: "admin", label: "Admin", icon: "🔐" },
+];
+
+export default function App() {
+  const [page, setPage] = useState("home");
+  const [selectedId, setSelectedId] = useState(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [competitions, setCompetitions] = useState(INITIAL_COMPETITIONS);
+  const [results, setResults] = useState(INITIAL_RESULTS);
+  const groups = INITIAL_GROUPS; // fixed: Kanz & Jawhar
+  const [students, setStudents] = useState(INITIAL_STUDENTS);
+  const [totalResultVisible, setTotalResultVisible] = useState(false);
+  const [posterGallery, setPosterGallery] = useState([]);
+  const [justPublished, setJustPublished] = useState(null);
+  const [adminSignedIn, setAdminSignedIn] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
+
+  const cd = useCountdown(EVENT_DATE);
+
+  const announcedCount = Object.values(results).filter((r) => r.published).length;
+
+  function publish(id, values) {
+    setResults((prev) => {
+      const wasAnnounced = prev[id]?.published;
+      if (!wasAnnounced) { setJustPublished(id); setTimeout(() => setJustPublished(null), 3000); }
+      return { ...prev, [id]: { ...values, published: true } };
+    });
+  }
+  function revoke(id) {
+    setResults((prev) => ({ ...prev, [id]: { ...prev[id], published: false } }));
+  }
+
+  function addCompetition(data) {
+    setCompetitions((prev) => [...prev, { id: newId(), ...data }]);
+  }
+  function updateCompetition(id, data) {
+    setCompetitions((prev) => prev.map((c) => (c.id === id ? { ...c, ...data } : c)));
+  }
+  function deleteCompetition(id) {
+    if (!confirm("Delete this competition? This also removes its result.")) return;
+    setCompetitions((prev) => prev.filter((c) => c.id !== id));
+    setResults((prev) => { const next = { ...prev }; delete next[id]; return next; });
+  }
+
+  function addStudent(groupId, studentId, name) {
+    setStudents((prev) => [...prev, { id: newId(), groupId, studentId, name }]);
+  }
+  function deleteStudent(id) {
+    if (!confirm("Remove this student from the roster?")) return;
+    setStudents((prev) => prev.filter((s) => s.id !== id));
+  }
+
+  function savePoster(entry) {
+    setPosterGallery((prev) => [entry, ...prev]);
+  }
+  function deletePoster(id) {
+    setPosterGallery((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  function goTo(p, id) { setPage(p); if (id) setSelectedId(id); window.scrollTo(0, 0); setMobileNavOpen(false); }
+
+  const filtered = competitions.filter((c) => {
+    const q = c.name.toLowerCase().includes(query.toLowerCase());
+    const r = results[c.id];
+    const f = filter === "all" || (filter === "announced" ? r?.published : !r?.published);
+    return q && f;
+  });
+
+  return (
+    <div className="min-h-screen bg-[#FAF7EF] text-[#16211C]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
+      <style>{`@import url('${FONT_LINK}'); .font-display{font-family:'Reem Kufi',serif;}`}</style>
+
+      {/* PREVIEW BANNER */}
+      <div className="bg-amber-900 px-4 py-2 text-center text-xs font-semibold text-amber-50">
+        UI PREVIEW — mock data only. Publishing a result here updates this page's local state to simulate what happens live; it isn't connected to Supabase.
+      </div>
+
+      {/* NAVBAR */}
+      <header className="sticky top-0 z-40 border-b border-emerald-900/10 bg-[#FAF7EF]/90 backdrop-blur-md">
+        <nav className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
+          <button onClick={() => goTo("home")} className="flex items-center gap-2">
+            <span className="text-2xl">🕌</span>
+            <span className="font-display text-lg text-emerald-900">Sirajul Huda</span>
+          </button>
+          <div className="hidden items-center gap-1 md:flex">
+            {NAV.map((l) => (
+              <button key={l.key} onClick={() => goTo(l.key)}
+                className={`rounded-full px-4 py-2 text-sm font-medium transition ${page === l.key ? "bg-emerald-700 text-white" : "text-emerald-900/80 hover:bg-emerald-900/5"}`}>
+                {l.icon} {l.label}
+              </button>
+            ))}
+          </div>
+          <button className="flex h-9 w-9 flex-col items-center justify-center gap-1.5 rounded-lg border border-emerald-900/15 md:hidden" onClick={() => setMobileNavOpen((v) => !v)}>
+            <span className="h-0.5 w-5 bg-emerald-900" /><span className="h-0.5 w-5 bg-emerald-900" /><span className="h-0.5 w-5 bg-emerald-900" />
+          </button>
+        </nav>
+        {mobileNavOpen && (
+          <div className="border-t border-emerald-900/10 md:hidden">
+            <div className="mx-auto flex max-w-6xl flex-col px-4 py-2">
+              {NAV.map((l) => (
+                <button key={l.key} onClick={() => goTo(l.key)} className={`rounded-lg px-3 py-3 text-left text-sm font-medium ${page === l.key ? "bg-emerald-700 text-white" : "text-emerald-900/80"}`}>
+                  {l.icon} {l.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </header>
+
+      <main>
+        {page === "home" && (
+          <>
+            <section className="relative overflow-hidden bg-emerald-900">
+              <div className="absolute inset-0"><KhatamPattern opacity={0.12} /></div>
+              <div className="relative mx-auto flex max-w-4xl flex-col items-center px-4 py-20 text-center sm:px-6 sm:py-28">
+                <span className="text-5xl">🕌</span>
+                <p className="mt-4 text-sm uppercase tracking-[0.3em] text-yellow-200">Sirajul Huda Arabic Madrasa, Unnalu, Koyyur</p>
+                <h1 className="mt-2 font-display text-3xl leading-tight text-white sm:text-5xl">Miladh The First 2K26</h1>
+                <p className="mt-4 max-w-xl text-white/70">A celebration of faith, talent and community — featuring speech, recitation, nasheed and knowledge competitions for all ages.</p>
+                <div className="mt-6 flex flex-wrap items-center justify-center gap-4 text-sm text-white/60">
+                  <span>📅 {new Date(EVENT_DATE).toLocaleDateString(undefined, { dateStyle: "long" })}</span>
+                  <span>📍 Unnalu, Koyyur Post, Belthangady</span>
+                </div>
+                <div className="mt-8 flex gap-2 sm:gap-3">
+                  {[["Days", cd.days], ["Hours", cd.hours], ["Min", cd.minutes], ["Sec", cd.seconds]].map(([label, value]) => (
+                    <div key={label} className="flex w-16 flex-col items-center rounded-xl border border-yellow-400/30 bg-emerald-900/40 py-2 sm:w-20">
+                      <span className="font-display text-2xl text-yellow-200 sm:text-3xl">{String(value).padStart(2, "0")}</span>
+                      <span className="mt-0.5 text-[10px] uppercase tracking-widest text-yellow-200/60">{label}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
+                  <button onClick={() => goTo("competitions")} className="rounded-full bg-yellow-500 px-6 py-3 text-sm font-semibold text-emerald-900 shadow-lg transition hover:bg-yellow-400">🏆 View Competitions</button>
+                  <button onClick={() => goTo("results")} className="rounded-full border border-white/30 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10">🥇 View Results</button>
+                </div>
+                <div className="mt-8"><LiveIndicator dark /></div>
+              </div>
+            </section>
+
+            <section className="mx-auto -mt-8 max-w-4xl px-4 sm:px-6">
+              <div className="grid grid-cols-3 gap-4 rounded-2xl border border-emerald-900/10 bg-white/90 p-6 shadow-lg">
+                <Stat value={competitions.length} label="Competitions" />
+                <Stat value={announcedCount} label="Announced" />
+                <Stat value={competitions.length - announcedCount} label="Pending" />
+              </div>
+            </section>
+
+            <section className="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6">
+              <p className="font-display text-2xl text-emerald-900">Results update the moment they're announced.</p>
+              <p className="mx-auto mt-2 max-w-md text-sm text-emerald-900/60">No refreshing needed — every visitor sees changes the instant an admin publishes them.</p>
+            </section>
+          </>
+        )}
+
+        {page === "competitions" && (
+          <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h1 className="font-display text-3xl text-emerald-900">Competitions</h1>
+                <p className="mt-1 text-sm text-emerald-900/60">{competitions.length} competitions this year</p>
+              </div>
+              <LiveIndicator />
+            </div>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search competitions..."
+                className="w-full rounded-full border border-emerald-900/15 bg-white px-4 py-2.5 text-sm outline-none focus:border-emerald-500 sm:max-w-xs" />
+              <div className="flex gap-2">
+                {["all", "announced", "pending"].map((f) => (
+                  <button key={f} onClick={() => setFilter(f)} className={`rounded-full px-4 py-2 text-xs font-semibold capitalize ${filter === f ? "bg-emerald-700 text-white" : "border border-emerald-900/10 bg-white text-emerald-900/60"}`}>
+                    {f === "all" ? "All" : f === "announced" ? "🟢 Announced" : "🟡 Pending"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {filtered.map((c) => {
+                const announced = results[c.id]?.published;
+                return (
+                  <button key={c.id} onClick={() => goTo("result", c.id)} className="group flex flex-col overflow-hidden rounded-2xl border border-emerald-900/10 bg-white/80 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg">
+                    <div className="flex items-start justify-between">
+                      <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 text-xl">{CATEGORY_ICON[c.category] || "🏅"}</span>
+                      {announced ? <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">🟢 Announced</span>
+                        : <span className="rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-semibold text-yellow-700">🟡 Pending</span>}
+                    </div>
+                    <h3 className="mt-4 font-display text-lg text-emerald-900">{c.name}</h3>
+                    <p className="mt-1 text-sm text-emerald-900/60">Category: {c.category}</p>
+                    <div className="mt-4 flex items-center justify-end border-t border-emerald-900/5 pt-3">
+                      <span className="text-sm font-semibold text-emerald-700 group-hover:underline">View Result →</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {page === "result" && selectedId && (() => {
+          const c = competitions.find((x) => x.id === selectedId);
+          const r = results[selectedId];
+          const announced = r?.published;
+          return (
+            <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
+              <button onClick={() => goTo("competitions")} className="text-sm text-emerald-700 hover:underline">← Back to Competitions</button>
+              <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h1 className="font-display text-3xl text-emerald-900">{c.name}</h1>
+                  <p className="mt-1 text-sm text-emerald-900/60">Category: {c.category}</p>
+                </div>
+                <LiveIndicator />
+              </div>
+              <p className="mt-4 max-w-xl text-sm text-emerald-900/60">Category: {c.category}</p>
+              <div className="mt-8">
+                {announced ? (
+                  <>
+                    <div className="mb-6 font-display text-xl text-emerald-800">🏆 Result Announced</div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      {[["🥇", "1st Place", r.first, "from-yellow-400 to-yellow-600 border-yellow-500"], ["🥈", "2nd Place", r.second, "from-slate-300 to-slate-400 border-slate-400"], ["🥉", "3rd Place", r.third, "from-amber-600 to-amber-800 border-amber-700"]].map(([medal, label, entry, accent]) => {
+                        const student = findStudentById(students, entry?.studentId);
+                        return (
+                          <div key={label} className={`relative flex flex-col items-center gap-1.5 rounded-t-[3rem] rounded-b-2xl border-2 bg-gradient-to-b ${accent} px-6 py-8 text-center shadow-md`}>
+                            {justPublished === selectedId && <Confetti />}
+                            <span className="text-4xl">{medal}</span>
+                            <span className="text-xs font-bold uppercase tracking-widest 
